@@ -39,6 +39,34 @@ class GlobalLimit:
         cls.global_limiter = Semaphore(value)
 
 
+class DoLimit:
+    """Simple class to hold a "do" function semaphore limiter for a project. This class
+    should be treated as a singleton that is instantiated when the project is.
+    """
+
+    limiter = Semaphore(PARALLEL_LIMIT // 2)
+
+    @classmethod
+    def set_global_limit(cls, value):
+        if value is None:
+            value = PARALLEL_LIMIT // 2
+        cls.limiter = Semaphore(value)
+
+
+class ExecLimit:
+    """Simple class to hold a "exec" function semaphore limiter for a project. This class
+    should be treated as a singleton that is instantiated when the project is.
+    """
+
+    limiter = Semaphore(PARALLEL_LIMIT // 2)
+
+    @classmethod
+    def set_global_limit(cls, value):
+        if value is None:
+            value = PARALLEL_LIMIT // 2
+        cls.limiter = Semaphore(value)
+
+
 def parallel_execute_watch(events, writer, errors, results, msg, get_name, fail_check):
     """ Watch events from a parallel execution, update status and fill errors and results.
         Returns exception to re-raise.
@@ -165,6 +193,8 @@ def parallel_execute_iter(objects, func, get_deps, limit):
 
     if limit is None:
         limiter = NoLimit()
+    elif limit in [DoLimit, ExecLimit]:
+        limiter = limit.limiter
     else:
         limiter = Semaphore(limit)
 

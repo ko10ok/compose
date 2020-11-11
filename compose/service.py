@@ -48,6 +48,7 @@ from .container import Container
 from .errors import HealthCheckFailed
 from .errors import NoHealthCheckConfigured
 from .errors import OperationFailedError
+from .parallel import ExecLimit
 from .parallel import parallel_execute
 from .progress_stream import stream_output
 from .progress_stream import StreamOutputError
@@ -475,7 +476,8 @@ class Service:
             ],
             lambda service_name: create_and_start(self, service_name.number),
             get_name,
-            "Creating"
+            "Creating",
+            limit=ExecLimit,
         )
         for error in errors.values():
             raise OperationFailedError(error)
@@ -499,6 +501,7 @@ class Service:
             recreate,
             lambda c: c.name,
             "Recreating",
+            limit=ExecLimit,
         )
         for error in errors.values():
             raise OperationFailedError(error)
