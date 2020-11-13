@@ -85,6 +85,9 @@ def set_parallel_limit(environment):
             raise errors.UserError('COMPOSE_PARALLEL_LIMIT can not be less than 2')
         parallel.GlobalLimit.set_global_limit(parallel_limit)
 
+        # Depth of cascade parallel execution limited by global parallel_limit
+        parallel.CascadeLimiter.set_global_limit(parallel_limit)
+
 
 def get_config_from_options(base_dir, options, additional_options=None):
     additional_options = additional_options or {}

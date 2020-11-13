@@ -2,6 +2,7 @@ import _thread as thread
 import logging
 import operator
 import sys
+from functools import partial
 from queue import Empty
 from queue import Queue
 from threading import Lock
@@ -39,6 +40,10 @@ class GlobalLimit:
         cls.global_limiter = Semaphore(value)
 
 
+class ParallelLimitExceededByCascadeCalls(Exception):
+    pass
+
+
 def parallel_execute_watch(events, writer, errors, results, msg, get_name, fail_check):
     """ Watch events from a parallel execution, update status and fill errors and results.
         Returns exception to re-raise.
@@ -69,6 +74,31 @@ def parallel_execute_watch(events, writer, errors, results, msg, get_name, fail_
             errors[get_name(obj)] = exception
             error_to_reraise = exception
     return error_to_reraise
+
+
+class CascadeLimiter:
+    global_limit = PARALLEL_LIMIT
+    inner_limiter = Semaphore(1)
+
+    @classmethod
+    def set_global_limit(cls, value):
+        if value is None:
+            value = PARALLEL_LIMIT
+        cls.global_limit = value
+
+    def __init__(self, value=None):
+        if value is None:
+            value = self.global_limit
+        self.limit = value
+
+    def allocate(self):
+        with self.inner_limiter:
+            limit = self.limit // 2
+            self.limit -= limit
+            return limit
+
+    def remaining(self):
+        return self.limit
 
 
 def parallel_execute(objects, func, get_name, msg, get_deps=None, limit=None, fail_check=None):
@@ -165,6 +195,12 @@ def parallel_execute_iter(objects, func, get_deps, limit):
 
     if limit is None:
         limiter = NoLimit()
+    elif isinstance(limit, CascadeLimiter):
+        available_limit = limit.allocate()
+        if available_limit == 0:
+            raise ParallelLimitExceededByCascadeCalls()
+        limiter = Semaphore(available_limit)
+        func = partial(func, limit=limit.remaining())
     else:
         limiter = Semaphore(limit)
 
