@@ -24,6 +24,7 @@ from .container import Container
 from .network import build_networks
 from .network import get_networks
 from .network import ProjectNetworks
+from .parallel import DoLimit
 from .progress_stream import read_status
 from .service import BuildAction
 from .service import ContainerIpcMode
@@ -646,6 +647,7 @@ class Project:
             operator.attrgetter('name'),
             None,
             get_deps,
+            limit=DoLimit,
         )
         if errors:
             raise ProjectError(
