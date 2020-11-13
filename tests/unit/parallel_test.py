@@ -1,11 +1,14 @@
 import unittest
 from threading import Lock
 
+import pytest
 from docker.errors import APIError
 
+from compose.parallel import CascadeLimiter
 from compose.parallel import GlobalLimit
 from compose.parallel import parallel_execute
 from compose.parallel import parallel_execute_iter
+from compose.parallel import ParallelLimitExceededByCascadeCalls
 from compose.parallel import ParallelStreamWriter
 from compose.parallel import UpstreamError
 
@@ -87,6 +90,151 @@ class ParallelTest(unittest.TestCase):
 
         assert results == tasks * [None]
         assert errors == {}
+
+    @pytest.mark.timeout(10)
+    def test_parallel_cascade_execute_with_global_limit(self):
+        COMPOSE_PARALLEL_LIMIT = 2
+
+        GlobalLimit.set_global_limit(COMPOSE_PARALLEL_LIMIT)
+        CascadeLimiter.set_global_limit(COMPOSE_PARALLEL_LIMIT)
+        self.addCleanup(GlobalLimit.set_global_limit, None)
+        self.addCleanup(CascadeLimiter.set_global_limit, None)
+
+        tasks = COMPOSE_PARALLEL_LIMIT
+        inner_tasks = 2
+
+        lock = Lock()
+
+        def inner_f(obj):
+            locked = lock.acquire(False)
+            # we should always get the lock because we're the only thread running
+            assert locked
+            lock.release()
+            return None
+
+        def outer_f(obj, limit):
+            return parallel_execute(
+                objects=list(range(inner_tasks)),
+                func=inner_f,
+                get_name=str,
+                msg="Testing cascade parallel level 1 func",
+                limit=limit
+            )
+
+        results, errors = parallel_execute(
+            objects=list(range(tasks)),
+            func=outer_f,
+            get_name=str,
+            msg="Testing cascade parallel level 0 func",
+            limit=CascadeLimiter()
+        )
+
+        assert results == tasks * [(inner_tasks * [None], {})]
+        assert errors == {}
+
+    @pytest.mark.timeout(10)
+    def test_parallel_multiple_cascade_execute_with_global_limit(self):
+        COMPOSE_PARALLEL_LIMIT = 3
+
+        GlobalLimit.set_global_limit(COMPOSE_PARALLEL_LIMIT)
+        CascadeLimiter.set_global_limit(COMPOSE_PARALLEL_LIMIT)
+        self.addCleanup(GlobalLimit.set_global_limit, None)
+        self.addCleanup(CascadeLimiter.set_global_limit, None)
+
+        tasks = COMPOSE_PARALLEL_LIMIT
+        middle_tasks = 2
+        inner_tasks = 2
+
+        lock = Lock()
+
+        def inner_f(obj):
+            locked = lock.acquire(False)
+            # we should always get the lock because we're the only thread running
+            assert locked
+            lock.release()
+            return None
+
+        def middle_f(obj, limit):
+            return parallel_execute(
+                objects=list(range(inner_tasks)),
+                func=inner_f,
+                get_name=str,
+                msg="Testing cascade parallel level 2 func",
+                limit=limit
+            )
+
+        def outer_f(obj, limit):
+            return parallel_execute(
+                objects=list(range(middle_tasks)),
+                func=middle_f,
+                get_name=str,
+                msg="Testing cascade parallel level 1 func",
+                limit=CascadeLimiter(limit)
+            )
+        limiter = CascadeLimiter()
+        results, errors = parallel_execute(
+            objects=list(range(tasks)),
+            func=outer_f,
+            get_name=str,
+            msg="Testing cascade parallel level 0 func",
+            limit=limiter
+        )
+        assert results == tasks * [(inner_tasks * [(middle_tasks * [None], {})], {})]
+        assert errors == {}
+
+    @pytest.mark.timeout(10)
+    def test_parallel_cascade_execute_with_global_limit_less_than_call_stack_height(self):
+        COMPOSE_PARALLEL_LIMIT = 2
+
+        GlobalLimit.set_global_limit(COMPOSE_PARALLEL_LIMIT)
+        CascadeLimiter.set_global_limit(COMPOSE_PARALLEL_LIMIT)
+        self.addCleanup(GlobalLimit.set_global_limit, None)
+        self.addCleanup(CascadeLimiter.set_global_limit, None)
+
+        tasks = COMPOSE_PARALLEL_LIMIT
+        middle_tasks = 2
+        inner_tasks = 2
+
+        lock = Lock()
+
+        def inner_f(obj):
+            locked = lock.acquire(False)
+            # we should always get the lock because we're the only thread running
+            assert locked
+            lock.release()
+            return None
+
+        def middle_f(obj, limit):
+            print('middle limit:', limit)
+            return parallel_execute(
+                objects=list(range(inner_tasks)),
+                func=inner_f,
+                get_name=str,
+                msg="Testing cascade parallel level 2 func",
+                limit=limit
+            )
+
+        def outer_f(obj, limit):
+            print('outer limit:', limit)
+            return parallel_execute(
+                objects=list(range(middle_tasks)),
+                func=middle_f,
+                get_name=str,
+                msg="Testing cascade parallel level 1 func",
+                limit=CascadeLimiter(limit)
+            )
+
+        with pytest.raises(ParallelLimitExceededByCascadeCalls):
+            results, errors = parallel_execute(
+                objects=list(range(tasks)),
+                func=outer_f,
+                get_name=str,
+                msg="Testing cascade parallel level 0 func",
+                limit=CascadeLimiter()
+            )
+
+            assert results == tasks * [(inner_tasks * [(middle_tasks * [None], {})], {})]
+            assert errors == {}
 
     def test_parallel_execute_with_deps(self):
         log = []
